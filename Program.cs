@@ -17,6 +17,8 @@ namespace DfdlParser
 
             
             var result = parser.Parse(feed);
+            Console.WriteLine(result);
+            Console.ReadKey();
         }
     }
 }
