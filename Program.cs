@@ -13,9 +13,10 @@ namespace DfdlParser
             var dfdl = @"d:\dfdltests\ruralfinance.xsd";
             var feed = @"d:\dfdltests\feed.txt";
 
-            var parser = new SchemaParser();
+            var parser = new SchemaParser(dfdl);
 
-            var xml = parser.Load(dfdl, feed);
+            
+            var result = parser.Parse(feed);
         }
     }
 }

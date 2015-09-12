@@ -1,10 +1,12 @@
 ﻿using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
+using System.Xml.Linq;
 using System.Xml.Schema;
 
 namespace DfdlParser
@@ -12,23 +14,28 @@ namespace DfdlParser
     class SchemaParser
     {
         
-        private Dictionary<string, Entity> _entities;
-        private string _filename;
+        private List<Entity> _entities;
         private XmlNamespaceManager _nsmgr;
-        
-        public SchemaParser()
+        private Dictionary<string, string> _dfdlProperties;
+
+        public SchemaParser(string dfdl)
         {
             _nsmgr = new XmlNamespaceManager(new NameTable());
             _nsmgr.AddNamespace("xsd", "http://www.w3.org/2001/XMLSchema");
             _nsmgr.AddNamespace("dfdl", "http://www.ogf.org/dfdl/dfdl-1.0/");
+            _dfdlProperties = new Dictionary<string, string>();
+
+            Load(dfdl);
         }
 
-        public List<Entity> Load(string dfdl, string fileToParse)
-        {
-            _entities = new Dictionary<string, Entity>();
-            XmlSchema custSchema = ReadAndCompileSchema(dfdl);
-            var dfdlProperties = new Dictionary<string, string>();
 
+
+        private void Load(string dfdl)
+        {
+            _entities = new List<Entity>();
+            XmlSchema custSchema = ReadAndCompileSchema(dfdl);
+
+            //Get global properties
             foreach (var include in custSchema.Includes)
             {
                 if(include is XmlSchemaImport)
@@ -45,7 +52,7 @@ namespace DfdlParser
                                 {
                                     var appInfoNodes = ((XmlSchemaAppInfo)annotationItem).Markup;
 
-                                    var dfdlDefineEscapeSchema = appInfoNodes.Where(x => x.Name == "dfdl:defineEscapeScheme").SingleOrDefault();
+                                    var dfdlDefineEscapeSchema = appInfoNodes.SingleOrDefault(x => x.Name == "dfdl:defineEscapeScheme");
                                     var dfdlEscapeSchema = dfdlDefineEscapeSchema.SelectNodes("dfdl:escapeScheme", _nsmgr);
                                     foreach(var s in dfdlEscapeSchema)
                                     {
@@ -53,13 +60,13 @@ namespace DfdlParser
                                         {
                                             foreach (XmlAttribute a in ((XmlElement)s).Attributes)
                                             {
-                                                dfdlProperties.Add(a.Name, a.Value);
+                                                _dfdlProperties.Add(a.Name, a.Value);
                                             }
                                         }
                                     }
 
                                     //dfdlEscapeSchema.
-                                    var dfdlDefineFormat = appInfoNodes.Where(x => x.Name == "dfdl:defineFormat").SingleOrDefault();
+                                    var dfdlDefineFormat = appInfoNodes.SingleOrDefault(x => x.Name == "dfdl:defineFormat");
                                     var dfdlFormat = dfdlDefineFormat.SelectNodes("dfdl:format", _nsmgr);
                                     foreach (var s in dfdlFormat)
                                     {
@@ -67,7 +74,7 @@ namespace DfdlParser
                                         {
                                             foreach (XmlAttribute a in ((XmlElement)s).Attributes)
                                             {
-                                                dfdlProperties.Add(a.Name, a.Value);
+                                                _dfdlProperties.Add(a.Name, a.Value);
                                             }
                                         }
                                     }
@@ -88,8 +95,102 @@ namespace DfdlParser
                 ProcessElement(null, elem);
             }
 
+        }
 
-            return _entities.Values.ToList();
+        public string Parse(string filename)
+        {
+            var fileContents = "";
+
+            var doc = new XmlDocument();
+            var rootNode = doc.CreateElement("root");
+
+            var dfdlRoot = _entities.FirstOrDefault(e => e.IsRoot);
+
+            using (var sr = new StreamReader(filename))
+            {
+                fileContents = sr.ReadToEnd();
+            }
+
+            var lines = fileContents.Split(new string[] { GetVar(_dfdlProperties["outputNewLine"]) }, StringSplitOptions.None);
+
+            int startIndex = 0;
+
+            ParseEntity(lines, ref startIndex, dfdlRoot, doc, rootNode);
+            
+
+            var ms = new MemoryStream();
+            var sw = new StreamWriter(ms);
+            ms.Position = 0;
+            doc.WriteTo(new XmlTextWriter(ms, Encoding.UTF8));
+
+            return doc.ToString();
+
+            
+        }
+
+        private void ParseEntity(string[] fileLines, ref int startIndex, Entity entity, XmlDocument doc, XmlNode xmlElement)
+        {
+            foreach (var attribute in entity.Attributes)
+            {
+                if (attribute.DataType == "Entity")
+                {
+                    ParseEntityAttribute(fileLines, ref startIndex, attribute, doc, xmlElement);
+                }
+                else
+                {
+                    //ParseLine(fileLines[startIndex], ref startIndex, attribute, doc, xmlElement);
+                }
+                
+            }
+        }
+
+        private void ParseEntityAttribute(string[] fileLines, ref int startIndex, Attribute attribute, XmlDocument doc, XmlNode xmlElement)
+        {
+            int startPos = 0;
+            if (fileLines[startIndex].StartsWith(attribute.Initiator))
+            {
+                xmlElement = xmlElement.AppendChild(doc.CreateElement(attribute.Name));
+                startPos = attribute.Initiator.Length;
+
+            }
+
+            var entityType = (from x in _entities
+                              where x.Name == attribute.Name
+                              select x).SingleOrDefault();
+
+            
+            if (entityType.Attributes != null)
+            {
+                foreach (var childAttribute in entityType.Attributes)
+                {
+                    if (childAttribute.DataType == "Entity")
+                    {
+                        ParseEntityAttribute(fileLines, ref startIndex, childAttribute, doc, xmlElement);
+                    }
+                    else
+                    {
+                        ParseLine(fileLines[startIndex], startPos, entityType, doc, xmlElement);
+                        startIndex++;
+                    }
+                    
+                }
+                    
+            }
+        }
+
+
+        private void ParseLine(string fileLine, int startPos, Entity entityType, XmlDocument doc, XmlNode xmlElement)
+        {
+            foreach (var attribute in entityType.Attributes)
+            {
+                if (attribute.Length > 0)
+                {
+                    var childElement = xmlElement.AppendChild(doc.CreateElement(attribute.Name));
+                    childElement.InnerText = fileLine.Substring(startPos, attribute.Length);
+                    startPos += attribute.Length;
+
+                }
+            }
         }
 
         private static XmlSchema ReadAndCompileSchema(string filename)
@@ -163,7 +264,7 @@ namespace DfdlParser
                 entity.Attributes = new List<Attribute>(attributes);
                 ProcessSchemaObject(entity, ct.ContentTypeParticle);
 
-                _entities.Add(entity.Name, entity);
+                _entities.Add(entity);
             }
 
             if (parent != null)
@@ -180,7 +281,7 @@ namespace DfdlParser
                 }
                 else
                 {
-                    _entities.TryGetValue(ns + ":" + elem.Name, out entityType);
+                    entityType = _entities.Where(x => x.Name == ns + ":" + elem.Name).SingleOrDefault();
                 }
 
 
@@ -270,23 +371,6 @@ namespace DfdlParser
             Console.WriteLine(args.Message);
         }
 
-        /*
-        private static DataType GetDataType(XmlSchemaSimpleType xmlType)
-        {
-            var dt = xmlType.Datatype;
-            DataType result;
-            string attributeType = dt.ValueType.Name.ToLower();
-            switch (attributeType)
-            {
-                case "string":
-                    result = _domainProxy.GetDataType("string");
-                    break;
-                default:
-                    throw new Exception(string.Format("DataType {0} is not recognized", dt.ValueType.Name.ToLower()));
-            }
-            return result;
-        }*/
-
 
         private string GetDataType(XmlSchemaType xmlType)
         {
@@ -334,6 +418,17 @@ namespace DfdlParser
                     return _domainProxy.GetDataType("Entity");
             }*/
 
+        }
+
+        private static string GetVar(string input)
+        {
+            switch (input)
+            {
+                case "%CR;%LF;":
+                    return "\n";
+                default:
+                    return input;
+            }
         }
     }
 }
