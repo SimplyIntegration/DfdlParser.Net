@@ -17,6 +17,7 @@ namespace DfdlParser
         private Dictionary<string, string> _dfdlProperties;
         private XmlSchema _dfdlSchema;
         private int _startPos = 0;
+        private bool _doMore = false;
 
         public SchemaParser(string dfdl)
         {
@@ -28,6 +29,7 @@ namespace DfdlParser
             Load(dfdl);
         }
 
+        public string TranslationXslt { get; set; }
 
 
         private void Load(string dfdl)
@@ -123,16 +125,17 @@ namespace DfdlParser
                 ProcessElement(elem, ref startIndex, doc, rootNode, dfdlProperties);
             }
 
+            
             var result = "";
-            using (var sw = new StringWriter())
-            {
-                using (var xw = XmlWriter.Create(sw))
-                {
-                    doc.WriteTo(xw);
-                    xw.Flush();
-                    result = sw.GetStringBuilder().ToString();
-                }
-            }
+            //var stream = new MemoryStream();
+            var stream = new FileStream(@"d:\dfdltests\output.xml", FileMode.Create);
+            var xmlWriter = new XmlTextWriter(stream, Encoding.UTF8);
+            xmlWriter.Formatting = Formatting.Indented;
+
+            doc.WriteContentTo(xmlWriter);
+            xmlWriter.Flush();
+            stream.Flush();
+            stream.Position = 0;
 
             return result;
 
@@ -164,26 +167,33 @@ namespace DfdlParser
             return schema;
         }
 
-        private void ProcessElement(XmlSchemaElement elem, ref int startIndex, XmlDocument xmlDoc, XmlNode xmlElement, DfdlProperties dfdlProperties)
+        private bool ProcessElement(XmlSchemaElement elem, ref int startIndex, XmlDocument xmlDoc, XmlNode xmlElement, DfdlProperties dfdlProperties)
         {
-            int startPos = 0;
+            bool doMore = true;
             var name = elem.Name;
-            string ns = elem.QualifiedName.Namespace;
-            if (string.IsNullOrEmpty(ns))
-            {
-                ns = "Default";
-            }
-
+            if (name == "Account")
+                name = elem.Name;
+            int loopIndex = 0;
+            
             if (elem.ElementSchemaType is XmlSchemaComplexType)
             {
-                xmlElement = xmlElement.AppendChild(xmlDoc.CreateElement(elem.Name));               
+                //Repopulate dfdlProperties
+                dfdlProperties = new DfdlProperties(elem);
+                while (doMore && loopIndex < dfdlProperties.MaxOccurs)
+                {
+                    if (loopIndex == 0)
+                        xmlElement = xmlElement.AppendChild(xmlDoc.CreateElement(elem.Name));
+                    else
+                        xmlElement = xmlElement.ParentNode.InsertAfter(xmlDoc.CreateElement(elem.Name), xmlElement);                   
+                    var ct =
+                        elem.ElementSchemaType as XmlSchemaComplexType;
 
-                var ct =
-                    elem.ElementSchemaType as XmlSchemaComplexType;
+                    doMore = ProcessSchemaObject(ct.ContentTypeParticle, ref startIndex, xmlDoc, xmlElement,
+                        dfdlProperties, doMore);
+                    loopIndex++;
+                }
 
-                ProcessSchemaObject(ct.ContentTypeParticle, ref startIndex, xmlDoc, xmlElement, new DfdlProperties(elem) );
 
-                //_entities.Add(entity);
             }
 
             if (xmlElement != null)
@@ -199,11 +209,12 @@ namespace DfdlParser
                         startIndex++;
                         _startPos = 0;
                     }
+                    return true;
                 }
 
                     
             }
-
+            return false;
 
         }
 
@@ -226,32 +237,36 @@ namespace DfdlParser
 
         }
 
-        private void ProcessSequence(XmlSchemaSequence sequence, ref int startIndex, XmlDocument xmlDoc, XmlNode xmlElement, DfdlProperties dfdlProperties)
+        private bool ProcessSequence(XmlSchemaSequence sequence, ref int startIndex, XmlDocument xmlDoc, XmlNode xmlElement, DfdlProperties dfdlProperties, bool doMore)
         {
-
-            ProcessItemCollection(sequence.Items, ref startIndex, xmlDoc, xmlElement, dfdlProperties);
+            doMore = ProcessItemCollection(sequence.Items, ref startIndex, xmlDoc, xmlElement, dfdlProperties, doMore);
+            return doMore;
         }
 
-        private void ProcessChoice(XmlSchemaChoice choice, ref int startIndex, XmlDocument xmlDoc, XmlNode xmlElement, DfdlProperties dfdlProperties)
+        private bool ProcessChoice(XmlSchemaChoice choice, ref int startIndex, XmlDocument xmlDoc, XmlNode xmlElement, DfdlProperties dfdlProperties, bool doMore)
         {
             Console.WriteLine("Choice");
-            ProcessItemCollection(choice.Items, ref startIndex, xmlDoc, xmlElement, dfdlProperties);
+            ProcessItemCollection(choice.Items, ref startIndex, xmlDoc, xmlElement, dfdlProperties, doMore);
+            return true;
         }
 
-        private void ProcessItemCollection(XmlSchemaObjectCollection objs, ref int startIndex, XmlDocument xmlDoc, XmlNode xmlElement, DfdlProperties dfdlProperties)
+        private bool ProcessItemCollection(XmlSchemaObjectCollection objs, ref int startIndex, XmlDocument xmlDoc, XmlNode xmlElement, DfdlProperties dfdlProperties, bool doMore)
         {
             foreach (XmlSchemaObject obj in objs)
-                ProcessSchemaObject(obj, ref startIndex, xmlDoc,xmlElement, dfdlProperties);
+                doMore = ProcessSchemaObject(obj, ref startIndex, xmlDoc,xmlElement, dfdlProperties, doMore);
+            return doMore;
         }
 
-        private void ProcessSchemaObject(XmlSchemaObject obj, ref int startIndex, XmlDocument xmlDoc, XmlNode xmlElement, DfdlProperties dfdlProperties)
+        private bool ProcessSchemaObject(XmlSchemaObject obj, ref int startIndex, XmlDocument xmlDoc, XmlNode xmlElement, DfdlProperties dfdlProperties, bool doMore)
         {
             if (obj is XmlSchemaElement)
-                ProcessElement(obj as XmlSchemaElement, ref startIndex, xmlDoc, xmlElement, dfdlProperties);
+                doMore = ProcessElement(obj as XmlSchemaElement, ref startIndex, xmlDoc, xmlElement, dfdlProperties);
             if (obj is XmlSchemaChoice)
-                ProcessChoice(obj as XmlSchemaChoice, ref startIndex, xmlDoc, xmlElement, dfdlProperties);
+                doMore = ProcessChoice(obj as XmlSchemaChoice, ref startIndex, xmlDoc, xmlElement, dfdlProperties, doMore);
             if (obj is XmlSchemaSequence)
-                ProcessSequence( obj as XmlSchemaSequence, ref startIndex, xmlDoc, xmlElement, dfdlProperties);
+                doMore = ProcessSequence( obj as XmlSchemaSequence, ref startIndex, xmlDoc, xmlElement, dfdlProperties, doMore);
+
+            return doMore;
         }
 
 
@@ -283,11 +298,38 @@ namespace DfdlParser
             {
                 Initiator = elem.UnhandledAttributes.SingleOrDefault(x => x.Name == "dfdl:initiator")!=null ? elem.UnhandledAttributes.SingleOrDefault(x => x.Name == "dfdl:initiator").Value : "";
                 Terminator = elem.UnhandledAttributes.SingleOrDefault(x => x.Name == "dfdl:terminator") != null ? elem.UnhandledAttributes.SingleOrDefault(x => x.Name == "dfdl:terminator").Value : "";
+
+                int result = 0;
+
+                if (int.TryParse(elem.MinOccursString, out result))
+                {
+                    MinOccurs = result;
+                }
+                else
+                {
+                    MinOccurs = 1;
+                }
+                
+                if(elem.MaxOccursString == null)
+                    MaxOccurs = 1;
+                else if (int.TryParse(elem.MaxOccursString, out result))
+                {
+                    MaxOccurs = result;
+                }
+                else
+                {
+                    MaxOccurs = int.MaxValue;
+                }
+
             }
         }
 
         public string Initiator { get; set; }
         public string Terminator { get; set; }
+
+        public int MinOccurs { get; set; }
+
+        public int MaxOccurs { get; set; }
 
 
     }

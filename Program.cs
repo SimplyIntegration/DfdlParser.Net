@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -10,15 +11,14 @@ namespace DfdlParser
     {
         static void Main(string[] args)
         {
-            var dfdl = @"d:\dfdltests\ruralfinance.xsd";
-            var feed = @"d:\dfdltests\feed.txt";
+            var dfdl = @"d:\dfdltests\dfdl.xsd";
+            var feed = @"d:\dfdltests\sampleinput2.txt";
 
             var parser = new SchemaParser(dfdl);
 
             
-            var result = parser.Parse(feed);
-            Console.WriteLine(result);
-            Console.ReadKey();
+            parser.Parse(feed);
+            
         }
     }
 }
