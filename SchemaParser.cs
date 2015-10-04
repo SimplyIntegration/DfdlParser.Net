@@ -17,8 +17,7 @@ namespace DfdlParser
         private Dictionary<string, string> _dfdlProperties;
         private XmlSchema _dfdlSchema;
         private int _startPos = 0;
-        private bool _doMore = false;
-
+        
         public SchemaParser(string dfdl)
         {
             _nsmgr = new XmlNamespaceManager(new NameTable());
@@ -170,27 +169,33 @@ namespace DfdlParser
         private bool ProcessElement(XmlSchemaElement elem, ref int startIndex, XmlDocument xmlDoc, XmlNode xmlElement, DfdlProperties dfdlProperties)
         {
             bool doMore = true;
-            var name = elem.Name;
-            if (name == "Account")
-                name = elem.Name;
             int loopIndex = 0;
             
             if (elem.ElementSchemaType is XmlSchemaComplexType)
             {
                 //Repopulate dfdlProperties
                 dfdlProperties = new DfdlProperties(elem);
-                while (doMore && loopIndex < dfdlProperties.MaxOccurs)
+                while ((doMore || IsNextChildValid(elem, startIndex) ) && loopIndex < dfdlProperties.MaxOccurs)
+                //while (doMore && loopIndex < dfdlProperties.MaxOccurs)
                 {
-                    if (loopIndex == 0)
-                        xmlElement = xmlElement.AppendChild(xmlDoc.CreateElement(elem.Name));
-                    else
-                        xmlElement = xmlElement.ParentNode.InsertAfter(xmlDoc.CreateElement(elem.Name), xmlElement);                   
-                    var ct =
-                        elem.ElementSchemaType as XmlSchemaComplexType;
+                    if (IsValidInitiator(elem, startIndex))
+                    {
+                        if (loopIndex == 0)
+                            xmlElement = xmlElement.AppendChild(xmlDoc.CreateElement(elem.Name));
+                        else
+                            xmlElement = xmlElement.ParentNode.InsertAfter(xmlDoc.CreateElement(elem.Name), xmlElement);
+                        var ct =
+                            elem.ElementSchemaType as XmlSchemaComplexType;
 
-                    doMore = ProcessSchemaObject(ct.ContentTypeParticle, ref startIndex, xmlDoc, xmlElement,
-                        dfdlProperties, doMore);
-                    loopIndex++;
+                        doMore = ProcessSchemaObject(ct.ContentTypeParticle, ref startIndex, xmlDoc, xmlElement,
+                            dfdlProperties, doMore);
+                        loopIndex++;
+                    }
+                    else
+                    {
+                        doMore = false;
+                    }
+                    
                 }
 
 
@@ -218,6 +223,52 @@ namespace DfdlParser
 
         }
 
+        //How can this be made a lot better? or can the algorithm be improved so calling this is not required?
+        private bool IsNextChildValid(XmlSchemaElement elem, int startIndex)
+        {
+            var ct = elem.ElementSchemaType as XmlSchemaComplexType;
+            var x = ct.ContentTypeParticle;
+
+            if (x is XmlSchemaSequence)
+            {
+                var seq = (XmlSchemaSequence) x;
+                if (seq.Items != null && seq.Items.Count > 0)
+                {
+                    var firstChild = seq.Items[0];
+                    if (firstChild is XmlSchemaElement && ((XmlSchemaElement)firstChild).ElementSchemaType is XmlSchemaComplexType)
+                    {
+                        var dfdlProperties = new DfdlProperties((XmlSchemaElement) firstChild);
+
+                        if (dfdlProperties.Initiator != null && _startPos == 0)
+                            _startPos = dfdlProperties.Initiator.Length;
+
+                        if (startIndex < _lines.Count() && _lines[startIndex].StartsWith(dfdlProperties.Initiator))
+                        {
+                            return true;
+                        }
+
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private bool IsValidInitiator(XmlSchemaElement elem, int startIndex)
+        {
+            var dfdlProperties = new DfdlProperties(elem);
+
+            
+            if (dfdlProperties.Initiator != null && _startPos == 0)
+                _startPos = dfdlProperties.Initiator.Length;
+
+            if (startIndex < _lines.Count() && _lines[startIndex].StartsWith(dfdlProperties.Initiator))
+            {
+                return true;
+            }
+                    
+            return false;
+        }
 
         private void ParseField(XmlSchemaElement elem, ref int startIndex, XmlDocument xmlDoc, XmlNode xmlElement, DfdlProperties dfdlProperties)
         {
