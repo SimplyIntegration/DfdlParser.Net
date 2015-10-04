@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
 using System.Xml.Schema;
+using System.Xml.Xsl;
 
 namespace DfdlParser
 {
@@ -125,13 +126,25 @@ namespace DfdlParser
             }
 
             
+            
             var result = "";
             //var stream = new MemoryStream();
             var stream = new FileStream(@"d:\dfdltests\output.xml", FileMode.Create);
             var xmlWriter = new XmlTextWriter(stream, Encoding.UTF8);
             xmlWriter.Formatting = Formatting.Indented;
 
-            doc.WriteContentTo(xmlWriter);
+            if (!string.IsNullOrEmpty(this.TranslationXslt))
+            {
+                var xslTransform = new XslCompiledTransform();
+                xslTransform.Load(TranslationXslt);
+                xslTransform.Transform(doc, xmlWriter);
+            }
+            else
+            {
+                doc.WriteContentTo(xmlWriter);
+            }
+
+            
             xmlWriter.Flush();
             stream.Flush();
             stream.Position = 0;
@@ -208,7 +221,7 @@ namespace DfdlParser
 
                 if (startIndex < _lines.Count() && _lines[startIndex].StartsWith(dfdlProperties.Initiator))
                 {
-                    ParseField(elem, ref startIndex, xmlDoc, xmlElement, dfdlProperties);
+                    ParseField(elem, ref startIndex, xmlDoc, xmlElement);
                     if (_lines[startIndex].Length <= _startPos + 1)
                     {
                         startIndex++;
@@ -270,7 +283,7 @@ namespace DfdlParser
             return false;
         }
 
-        private void ParseField(XmlSchemaElement elem, ref int startIndex, XmlDocument xmlDoc, XmlNode xmlElement, DfdlProperties dfdlProperties)
+        private void ParseField(XmlSchemaElement elem, ref int startIndex, XmlDocument xmlDoc, XmlNode xmlElement)
         {
             var attr = elem.UnhandledAttributes.SingleOrDefault(x => x.Name == "dfdl:length");
             if (attr != null)
@@ -279,7 +292,7 @@ namespace DfdlParser
                 var value = _lines[startIndex].Substring(_startPos, length);
 
                 var newElement = xmlDoc.CreateElement(elem.Name);
-                newElement.InnerText = value;
+                newElement.InnerText = value.TrimEnd();
                 xmlElement.AppendChild(newElement);
                 _startPos += length;
             }

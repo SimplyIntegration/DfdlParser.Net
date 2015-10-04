@@ -13,9 +13,10 @@ namespace DfdlParser
         {
             var dfdl = @"d:\dfdltests\dfdl.xsd";
             var feed = @"d:\dfdltests\sampleinput2.txt";
+            var xslt = @"d:\dfdltests\sample.xslt";
 
             var parser = new SchemaParser(dfdl);
-
+            parser.TranslationXslt = xslt;
             
             parser.Parse(feed);
             
